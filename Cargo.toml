@@ -1,0 +1,16 @@
+[package]
+name = "okx-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22.1"
+chrono = "0.4.38"
+dotenv = "0.15.0"
+eyre = "0.6.12"
+hmac = "0.12.1"
+reqwest = { version = "0.12.4", features = ["json"] }
+serde = { version = "1.0.202", features = ["derive"] }
+serde_json = "1.0.117"
+sha2 = "0.10.8"
+tokio = { version = "1.37.0", features = ["full"] }

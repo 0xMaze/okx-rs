@@ -5,12 +5,13 @@ use std::{
 
 use crate::{
     constants::{
-        ASSETS_TRANSFER_PATH, GET_SUB_ACCOUNTS_FUNDING_BALANCE_PATH, GET_SUB_ACCOUNTS_LIST_PATH,
-        GET_TRADING_ACCOUNT_BALANCE_PATH, OKX_BASE_DOMAIN_URL,
+        ASSETS_TRANSFER_PATH, ASSETS_WITHDRAWAL_PATH, GET_SUB_ACCOUNTS_FUNDING_BALANCE_PATH,
+        GET_SUB_ACCOUNTS_LIST_PATH, GET_TRADING_ACCOUNT_BALANCE_PATH, OKX_BASE_DOMAIN_URL,
     },
     schemas::{
-        AssetsTransferSchema, AssetsTrasnferData, GetBalanceResponseDataDetails,
-        GetSubAccountListData, GetTradingBalanceResponseData, OkxResponseSchema,
+        AssetWithdrawalSchema, AssetsTransferSchema, AssetsTrasnferData, AssetsWithdrawalData,
+        GetBalanceResponseDataDetails, GetSubAccountListData, GetTradingBalanceResponseData,
+        OkxResponseSchema,
     },
 };
 use base64::{engine::general_purpose, Engine as _};
@@ -301,5 +302,34 @@ impl Okx {
         }
 
         Ok(())
+    }
+
+    pub async fn withdraw(
+        &self,
+        amt: f64,
+        fee: String,
+        ccy: String,
+        chain: String,
+        to_addr: String,
+    ) -> eyre::Result<()> {
+        let body = AssetWithdrawalSchema::new(amt, fee, ccy, chain, to_addr);
+        let response_body = self
+            .send_request(
+                ASSETS_WITHDRAWAL_PATH,
+                None,
+                None,
+                reqwest::Method::POST,
+                Some(serde_json::to_value(body).unwrap()),
+            )
+            .await?;
+
+        let body =
+            serde_json::from_value::<OkxResponseSchema<AssetsWithdrawalData>>(response_body)?;
+
+        if body.code == "0" {
+            Ok(())
+        } else {
+            Err(eyre!("Response code is not OK: {}", body.code))
+        }
     }
 }

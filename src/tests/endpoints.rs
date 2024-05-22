@@ -83,3 +83,24 @@ async fn test_transfer_from_sub_accounts() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn test_withdrawal() {
+    dotenv().ok();
+
+    let password = std::env::var("API_PASSWORD").expect("API_PASSWORD must be set");
+    let secret_key = std::env::var("API_SECRET").expect("API_SECRET must be set");
+    let api_key = std::env::var("API_KEY").expect("API_KEY must be set");
+
+    let exchange = Okx::new(secret_key, api_key, password);
+
+    let ccy = "SOL".to_string();
+    let address = "".to_string();
+    let chain = "Solana".to_string();
+    let fee = "0.008".to_string();
+    let amount = 0.01;
+    exchange
+        .withdraw(amount, fee, ccy, chain, address)
+        .await
+        .unwrap();
+}

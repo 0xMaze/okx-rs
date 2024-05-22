@@ -12,6 +12,13 @@ impl<T> OkxResponseSchema<T> {
     }
 }
 
+#[allow(unused)]
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetsWithdrawalData {
+    wd_id: String,
+}
+
 #[derive(Deserialize, Debug)]
 pub struct GetTradingBalanceResponseData {
     pub details: Vec<GetBalanceResponseDataDetails>,
@@ -70,10 +77,39 @@ impl AssetsTransferSchema {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetsTrasnferData {
     trans_id: String,
     ccy: String,
     amt: String,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetWithdrawalSchema {
+    amt: String,
+    fee: String,
+    dest: String,
+    ccy: String,
+    chain: String,
+    to_addr: String,
+}
+
+impl AssetWithdrawalSchema {
+    pub fn new(amt: f64, fee: String, ccy: String, chain: String, to_addr: String) -> Self {
+        let amt = amt.to_string();
+        let chain = format!("{}-{}", ccy, chain);
+        let dest = "4".to_string();
+
+        Self {
+            amt,
+            fee,
+            dest,
+            ccy,
+            chain,
+            to_addr,
+        }
+    }
 }

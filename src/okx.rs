@@ -1,8 +1,21 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use crate::constants::{GET_BALANCE_PATH, LOAD_MARKETS_PATH, OKX_BASE_DOMAIN_URL};
+use crate::{
+    constants::{
+        ASSETS_TRANSFER_PATH, GET_SUB_ACCOUNTS_FUNDING_BALANCE_PATH, GET_SUB_ACCOUNTS_LIST_PATH,
+        GET_TRADING_ACCOUNT_BALANCE_PATH, OKX_BASE_DOMAIN_URL,
+    },
+    schemas::{
+        AssetsTransferSchema, AssetsTrasnferData, GetBalanceResponseDataDetails,
+        GetSubAccountListData, GetTradingBalanceResponseData, OkxResponseSchema,
+    },
+};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
+use eyre::eyre;
 use hmac::{Hmac, Mac};
 use reqwest::{header::HeaderMap, Proxy, Url};
 use sha2::Sha256;
@@ -139,7 +152,7 @@ impl Okx {
         proxy: Option<&str>,
         method: reqwest::Method,
         body: Option<serde_json::Value>,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<serde_json::Value> {
         let client_builder = reqwest::ClientBuilder::new();
         let client = if let Some(proxy) = proxy {
             client_builder.proxy(Proxy::all(proxy)?).build()
@@ -149,10 +162,10 @@ impl Okx {
 
         let url = Self::build_url(path, params);
         let path_and_params = Self::extract_path_and_params(&url);
-
         let headers = self.get_auth_headers(method.clone(), &path_and_params, body.clone());
 
         let request_builder = client.request(method, url).headers(headers);
+
         let request = if let Some(body) = body {
             request_builder.json(&body).build()?
         } else {
@@ -161,24 +174,132 @@ impl Okx {
 
         let response = client.execute(request).await?;
         let value = response.json::<serde_json::Value>().await?;
-        println!("{value:#?}");
 
-        Ok(())
+        Ok(value)
     }
 
-    pub async fn fetch_balance(&self, ccy: Option<Vec<String>>) {
+    pub async fn get_trading_account_balance(
+        &self,
+        ccy: Option<Vec<String>>,
+    ) -> eyre::Result<OkxResponseSchema<GetTradingBalanceResponseData>> {
         let params = ccy
             .map(|ccy| ccy.join(","))
             .map(|ccies| vec![("ccy".to_string(), ccies)]);
 
-        let _ = self
-            .send_request(GET_BALANCE_PATH, params, None, reqwest::Method::GET, None)
-            .await;
+        let response_body = self
+            .send_request(
+                GET_TRADING_ACCOUNT_BALANCE_PATH,
+                params,
+                None,
+                reqwest::Method::GET,
+                None,
+            )
+            .await?;
+
+        let balance_schema = serde_json::from_value::<
+            OkxResponseSchema<GetTradingBalanceResponseData>,
+        >(response_body)?;
+
+        Ok(balance_schema)
     }
 
-    pub async fn load_markets(&self) {
-        let _ = self
-            .send_request(LOAD_MARKETS_PATH, None, None, reqwest::Method::GET, None)
-            .await;
+    pub async fn get_sub_account_funding_balance(
+        &self,
+        account_name: &str,
+    ) -> eyre::Result<OkxResponseSchema<GetBalanceResponseDataDetails>> {
+        let params = vec![("subAcct".to_string(), account_name.to_string())];
+
+        let response_body = self
+            .send_request(
+                GET_SUB_ACCOUNTS_FUNDING_BALANCE_PATH,
+                Some(params),
+                None,
+                reqwest::Method::GET,
+                None,
+            )
+            .await?;
+
+        let balance_schema = serde_json::from_value::<
+            OkxResponseSchema<GetBalanceResponseDataDetails>,
+        >(response_body)?;
+
+        Ok(balance_schema)
+    }
+
+    pub async fn get_sub_accounts_list(
+        &self,
+    ) -> eyre::Result<OkxResponseSchema<GetSubAccountListData>> {
+        let response_body = self
+            .send_request(
+                GET_SUB_ACCOUNTS_LIST_PATH,
+                None,
+                None,
+                reqwest::Method::GET,
+                None,
+            )
+            .await?;
+
+        let sub_account_list_schema =
+            serde_json::from_value::<OkxResponseSchema<GetSubAccountListData>>(response_body)?;
+        Ok(sub_account_list_schema)
+    }
+
+    pub async fn get_sub_accounts_funding_balances(
+        &self,
+    ) -> eyre::Result<HashMap<String, OkxResponseSchema<GetBalanceResponseDataDetails>>> {
+        let accounts = self.get_sub_accounts_list().await?;
+        let mut balances_map = HashMap::with_capacity(accounts.data.len());
+
+        for account in accounts.data {
+            let account_name = account.sub_acct;
+            let balance_schema = self.get_sub_account_funding_balance(&account_name).await?;
+            balances_map.insert(account_name, balance_schema);
+        }
+
+        Ok(balances_map)
+    }
+
+    async fn transfer_assets_from_sub_account_to_master(
+        &self,
+        ccy: &str,
+        amount: String,
+        sub_acct_name: String,
+    ) -> eyre::Result<()> {
+        let body = AssetsTransferSchema::new(ccy.to_string(), amount, sub_acct_name);
+        let response_body = self
+            .send_request(
+                ASSETS_TRANSFER_PATH,
+                None,
+                None,
+                reqwest::Method::POST,
+                Some(serde_json::to_value(body).unwrap()),
+            )
+            .await?;
+
+        let body = serde_json::from_value::<OkxResponseSchema<AssetsTrasnferData>>(response_body)?;
+
+        if body.code == "0" {
+            Ok(())
+        } else {
+            Err(eyre!("Response code is not OK: {}", body.code))
+        }
+    }
+
+    pub async fn transfer_assets_from_sub_accounts_to_master(
+        &self,
+        ccy: String,
+    ) -> eyre::Result<()> {
+        let balances_map = self.get_sub_accounts_funding_balances().await?;
+
+        for (account_name, balance_schema) in balances_map {
+            if let Some(data) = balance_schema.get_data() {
+                if let Some(balance) = data.get_balance(&ccy) {
+                    self.transfer_assets_from_sub_account_to_master(&ccy, balance, account_name)
+                        .await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
